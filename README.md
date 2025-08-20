@@ -1,2 +1,3 @@
 # ST-563-Final-Project
-GitHub Repository for ST 563 final project.
+
+See file above titled "ST 563 Final Project Report.pdf" for full project analysis/paper.
