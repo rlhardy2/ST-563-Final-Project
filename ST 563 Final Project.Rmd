@@ -1,0 +1,1433 @@
+---
+title: |
+  | Rachel Hardy
+  |
+  | ST 563 (601)
+  |
+  | Final Project
+  |
+  | Due 12/10/24
+output:
+  pdf_document:
+    toc: true
+  html_document:
+    toc: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(tinytex)
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(knitr)
+library(caret)
+library(rsample)
+library(MASS)
+library(ISLR2)
+library(corrplot)
+library(pls)
+library(leaps)
+library(glmnet)
+library(naivebayes)
+library(gam)
+library(splines)
+library(boot)
+library(ggplot2)
+library(GGally)
+library(data.table)
+library(earth) # For MARS models
+library(rpart) # For regression trees
+library(rpart.plot) # For plotting regression trees
+library(randomForest) # For random forests
+library(e1071) # For calculating variable importance
+library(ipred) # For fitting bagged decision trees
+library(BART) # For Bayesian Additive Regression Trees
+library(gbm) # For boosted regression trees
+library(rJava)
+library(bartMachine) # For Bayesian Additive Regression Trees
+library(h2o)
+```
+
+\newpage
+
+# Data Preparation
+
+**Below we will prepare the data!**
+
+```{r}
+## Original Data ----
+bleaching_data <- fread("global_bleaching_environmental.csv", 
+                        na.strings = c("", "NA", "nd"))
+
+# Using only data from the FRRP source
+# Removing observations where the response variable is missing
+final_data1 <- bleaching_data %>%
+  filter(!is.na(Percent_Bleaching)) %>%
+  filter(Data_Source == "FRRP") %>%
+  distinct(Site_ID, Sample_ID, .keep_all = TRUE)
+
+#Removing unwanted variables
+final_data2 <- final_data1 %>%
+  subset(select = -c(Site_ID, Sample_ID, Data_Source, Latitude_Degrees,
+                     Longitude_Degrees, Ocean_Name, Reef_ID,
+                     Realm_Name, Ecoregion_Name, Country_Name,
+                     State_Island_Province_Name, City_Town_Name,
+                     Site_Name, Date_Day, Date_Month, Date_Year,
+                     Substrate_Name, Percent_Cover,
+                     Bleaching_Level, Temperature_Mean,
+                     Temperature_Minimum, Temperature_Maximum,
+                     Temperature_Kelvin_Standard_Deviation,
+                     SSTA_Standard_Deviation, SSTA_Mean,
+                     SSTA_Minimum, SSTA_Maximum, SSTA_Frequency,
+                     SSTA_Frequency_Standard_Deviation, SSTA_FrequencyMax,
+                     SSTA_FrequencyMean, SSTA_DHW_Standard_Deviation,
+                     SSTA_DHWMax, SSTA_DHWMean, TSA_Standard_Deviation,
+                     TSA_Minimum, TSA_Maximum, TSA_Mean, TSA_Frequency,
+                     TSA_Frequency_Standard_Deviation, TSA_FrequencyMax,
+                     TSA_FrequencyMean, TSA_DHW_Standard_Deviation,
+                     TSA_DHWMax, TSA_DHWMean, Date, Site_Comments,
+                     Sample_Comments, Bleaching_Comments))
+
+# Final data set
+final_data <- final_data2 %>%
+  dplyr::select(
+    Distance_to_Shore,
+    Turbidity,
+    Cyclone_Frequency,
+    Depth_m,
+    Windspeed,
+    Temperature_Kelvin,
+    ClimSST,
+    SSTA,
+    SSTA_DHW,
+    TSA,
+    TSA_DHW,
+    Exposure,
+    Percent_Bleaching
+  )
+
+final_data$Exposure <- as.factor(final_data$Exposure)
+levels(final_data$Exposure)
+```
+
+# Data Exploration
+
+**Below we will explore the data!**
+
+```{r}
+# Density plot of Percent_Bleaching
+plot(density(final_data$Percent_Bleaching),
+     main = "Density of Percent_Bleaching",
+     xlab = "Y = Percent_Bleaching")
+```
+
+```{r}
+# Looking at the correlations of all numeric variables
+cor(final_data[,-c(12,13)])
+
+# Correlation plot
+corrplot::corrplot(corr = cor(final_data[,-c(12,13)]))
+```
+
+Below we will investigate the correlation of each variable with the response variable by using scatter plots and box plots.
+
+```{r}
+par(mfrow = c(2,3))
+
+#First set of graphs
+plot(x = final_data$Distance_to_Shore,
+     y = final_data$Percent_Bleaching,
+     xlab = "Distance to Shore",
+     ylab = "Percent Bleaching")
+plot(x = final_data$Turbidity,
+     y = final_data$Percent_Bleaching,
+     xlab = "Turbidity",
+     ylab = "Percent Bleaching")
+plot(x = final_data$Cyclone_Frequency,
+     y = final_data$Percent_Bleaching,
+     xlab = "Cyclone Frequency",
+     ylab = "Percent Bleaching")
+plot(x = final_data$Depth_m,
+     y = final_data$Percent_Bleaching,
+     xlab = "Depth (Meters)",
+     ylab = "Percent Bleaching")
+plot(x = final_data$Temperature_Kelvin,
+     y = final_data$Percent_Bleaching,
+     xlab = "Temperature (Kelvin)",
+     ylab = "Percent Bleaching")
+plot(x = final_data$ClimSST,
+     y = final_data$Percent_Bleaching,
+     xlab = "ClimSST",
+     ylab = "Percent Bleaching")
+
+# Second set of graphs
+plot(x = final_data$SSTA,
+     y = final_data$Percent_Bleaching,
+     xlab = "SSTA",
+     ylab = "Percent Bleaching")
+plot(x = final_data$SSTA_DHW,
+     y = final_data$Percent_Bleaching,
+     xlab = "SSTA_DHW",
+     ylab = "Percent Bleaching")
+plot(x = final_data$TSA,
+     y = final_data$Percent_Bleaching,
+     xlab = "TSA",
+     ylab = "Percent Bleaching")
+plot(x = final_data$TSA_DHW,
+     y = final_data$Percent_Bleaching,
+     xlab = "TSA_DHW",
+     ylab = "Percent Bleaching")
+boxplot(Percent_Bleaching ~ Windspeed,
+        data = final_data, 
+        ylab = "Percent Bleaching")
+boxplot(Percent_Bleaching ~ Exposure,
+        data = final_data, 
+        ylab = "Percent Bleaching")
+```
+
+* We will remove `TSA` because it is highly correlated with `Temperature_Kelvin`, having a correlation of 0.932.
+* We will remove `TSA_DHW` because it is highly correlated with `SSTA_DHW`, having a correlation of 0.952.
+
+```{r}
+par(mfrow = c(2,3))
+
+plot(density(final_data$Distance_to_Shore),
+     main = "Density of Distance_to_Shore")
+plot(density(final_data$Turbidity),
+     main = "Density of Turbidity")
+plot(density(final_data$Cyclone_Frequency),
+     main = "Density of Cyclone_Frequency")
+plot(density(final_data$Depth_m),
+     main = "Density of Depth_m")
+plot(density(final_data$Windspeed),
+     main = "Density of Windspeed")
+plot(density(final_data$Temperature_Kelvin),
+     main = "Density of Temperature_Kelvin")
+
+plot(density(final_data$ClimSST),
+     main = "Density of ClimSST")
+plot(density(final_data$SSTA),
+     main = "Density of SSTA")
+plot(density(final_data$SSTA_DHW),
+     main = "Density of SSTA_DHW")
+plot(density(final_data$TSA),
+     main = "Density of TSA")
+plot(density(final_data$TSA_DHW),
+     main = "Density of TSA_DHW")
+```
+
+# Data Splitting
+
+**Below we will split the data!**
+
+```{r}
+# Remove more unwanted variables
+coral_data <- final_data %>%
+  subset(select = -c(TSA, TSA_DHW))
+```
+
+```{r}
+set.seed(123)
+
+# Splitting the data into training and test sets
+index <- createDataPartition(coral_data$Percent_Bleaching,
+                             p = 0.75,
+                             list = FALSE,
+                             times = 1)
+train <- coral_data[index, ]
+test <- coral_data[-index, ]
+```
+
+# Data Analysis
+
+**Below we will model the data!**
+
+## (Section 1) Linear Regression Models
+
+### Model 1.1: Multiple Linear Regression (MLR)
+
+Below we will have two different models, a regression model without interaction terms and a regression model with interaction terms.
+
+* Model 1.1a: Multiple Linear Regression (without interaction terms)
+* Model 1.1b: Multiple Linear Regression (with interaction terms)
+
+#### Model 1.1a: Multiple Linear Regression (without interaction terms)
+
+Below is a multiple linear regression model without interaction terms.
+
+```{r}
+###################################### Model 1.1a ######################################
+# Model 1.1a: Multiple Linear Regression (without interaction terms)
+
+set.seed(123)
+
+# Fitting the model
+lm_model1 <- lm(Percent_Bleaching ~ .,
+                data = train)
+summary(lm_model1)
+```
+
+We can see above that the following variables are NOT significant:
+
+* `Windspeed`
+* `ClimSST`
+* `Exposure`
+
+Below we will recreate the model without these variables.
+
+```{r}
+# Fitting the model
+lm_model1_final <- lm(Percent_Bleaching ~ Distance_to_Shore +
+                        Turbidity +
+                        Cyclone_Frequency +
+                        Depth_m +
+                        Temperature_Kelvin +
+                        SSTA +
+                        SSTA_DHW,
+                      data = train)
+summary(lm_model1_final)
+```
+
+```{r}
+# Predict response for the test (holdout) set
+pred <- predict(lm_model1_final, newdata = test)
+
+# Compute test MSE
+lm_error1 <- mean((test$Percent_Bleaching - pred)**2)
+paste("Our estimated test MSE is", round(lm_error1, 2))
+
+# Compute test RMSE
+lm_rmse1 <- sqrt(lm_error1)
+paste("Our estimated test RMSE is", round(lm_rmse1, 2))
+
+# Compute R_squared
+r_squared_lm_model1 <- round(cor(pred, test$Percent_Bleaching)**2, 4)
+paste("Our estimated R_squared is", round(r_squared_lm_model1, 4))
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(lm_model1_final)
+```
+
+#### Model 1.1b: Multiple Linear Regression (with interaction terms)
+
+Below is a multiple linear regression model with interaction terms.
+
+```{r}
+###################################### Model 1.1b ######################################
+# Model 1.1b: Multiple Linear Regression (with interaction terms)
+
+set.seed(123)
+
+# Fitting the model
+lm_model2 <- lm(Percent_Bleaching ~ (.)^2,
+                data = train)
+#summary(lm_model2)
+
+lm_model2_final <- lm(Percent_Bleaching ~ Distance_to_Shore*Temperature_Kelvin +
+                        Distance_to_Shore*ClimSST +
+                        Turbidity*Depth_m +
+                        Cyclone_Frequency*Windspeed +
+                        Depth_m*Temperature_Kelvin +
+                        Temperature_Kelvin*SSTA_DHW +
+                        ClimSST*SSTA_DHW +
+                        SSTA*SSTA_DHW,
+                      data = train)
+summary(lm_model2_final)
+```
+
+```{r}
+# Predict response for the test (holdout) set
+pred <- predict(lm_model2_final, newdata = test)
+
+# Compute test MSE
+lm_error2 <- mean((test$Percent_Bleaching - pred)**2)
+paste("Our estimated test MSE is", round(lm_error2, 2))
+
+# Compute test RMSE
+lm_rmse2 <- sqrt(lm_error2)
+paste("Our estimated test RMSE is", round(lm_rmse2, 2))
+
+# Compute R_squared
+r_squared_lm_model2 <- round(cor(pred, test$Percent_Bleaching)**2, 4)
+paste("Our estimated R_squared is", round(r_squared_lm_model2, 4))
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(lm_model2_final)
+```
+
+### Model 1.2: Subset Selection
+
+Note that all of the three subset selection models chose models of size 7 with the following variables:
+
+* `Distance_to_Shore`
+* `Turbidity`
+* `Cyclone_Frequency`
+* `Depth_m`
+* `Temperature_Kelvin`
+* `SSTA`
+* `SSTA_DHW`
+
+`Windspeed`, `ClimSST`, and `Exposure` were not included in any of the models.
+
+**Note that we already fit a linear model with these 7 variables above. It is Model 1.1a.**
+
+#### Model 1.2a: Best Subset Selection
+
+Below we will execute best subset selection.
+
+```{r}
+###################################### Model 1.2a ######################################
+# Model 1.2a: Best Subset Selection
+
+set.seed(123)
+
+# Fitting the model
+best_subset <- regsubsets(Percent_Bleaching ~ ., 
+                          data = train, 
+                          nvmax = 10)
+
+# Model summary
+summary_best_subset <- summary(best_subset)
+
+# Creating a data frame of performance metrics
+metrics_best <- data.frame(model_size = seq(from = 1, to = 10, by = 1),
+                           aic = summary_best_subset$cp,
+                           bic = summary_best_subset$bic,
+                           adjR2 = summary_best_subset$adjr2)
+metrics_best
+
+# Finding which model has the lowest Cp and BIC
+c("Lowest Cp" = which.min(summary_best_subset$cp), 
+  "Lowest BIC" = which.min(summary_best_subset$bic),
+  "Highest Adj R2" = which.max(summary_best_subset$adjr2))
+```
+
+We will use a model of size 7 because it has a higher $R^2$ than the model of size 4.
+
+```{r}
+set.seed(123)
+
+# Fitting the model
+best_subset_final <- regsubsets(Percent_Bleaching ~ ., 
+                                data = test, 
+                                nvmax = 10)
+
+# Model summary
+summary_best_subset_final <- summary(best_subset_final)
+
+# Reporting coefficients of best model
+coef(best_subset_final, 7)
+```
+
+#### Model 1.2b: Forward Stepwise Selection
+
+Below we will execute forward stepwise selection.
+
+```{r}
+###################################### Model 1.2b ######################################
+# Model 1.2b: Forward Stepwise Selection
+
+set.seed(123)
+
+# Fitting the model
+forward_subset <- regsubsets(Percent_Bleaching ~ ., 
+                             data = train, 
+                             nvmax = 10,
+                             method = "forward")
+
+# Model summary
+summary_forward <- summary(forward_subset)
+
+# Creating a data frame of performance metrics
+metrics_forward <- data.frame(model_size = seq(from = 1, to = 10, by = 1),
+                              aic = summary_forward$cp,
+                              bic = summary_forward$bic,
+                              adjR2 = summary_forward$adjr2)
+metrics_forward
+
+# Finding which model has the lowest Cp and BIC
+c("Lowest Cp" = which.min(summary_forward$cp), 
+  "Lowest BIC" = which.min(summary_forward$bic),
+  "Highest Adj R2" = which.max(summary_forward$adjr2))
+```
+
+We will use a model of size 7 because it has a higher $R^2$ than the model of size 4.
+
+```{r}
+set.seed(123)
+
+# Fitting the model
+forward_final <- regsubsets(Percent_Bleaching ~ ., 
+                            data = test, 
+                            nvmax = 10,
+                            method = "forward")
+
+# Model summary
+summary_forward_final<- summary(forward_final)
+
+# Reporting coefficients of best model
+coef(forward_final, 7)
+```
+
+#### Model 1.2c: Backward Stepwise Selection
+
+Below we will execute backward stepwise selection.
+
+```{r}
+###################################### Model 1.2c ######################################
+# Model 1.2c: Backward Stepwise Selection
+
+set.seed(123)
+
+# Fitting the model
+backward_subset <- regsubsets(Percent_Bleaching ~ ., 
+                             data = train, 
+                             nvmax = 10,
+                             method = "backward")
+
+# Model summary
+summary_backward <- summary(backward_subset)
+
+# Creating a data frame of performance metrics
+metrics_backward <- data.frame(model_size = seq(from = 1, to = 10, by = 1),
+                               aic = summary_backward$cp,
+                               bic = summary_backward$bic,
+                               adjR2 = summary_backward$adjr2)
+metrics_backward
+
+# Finding which model has the lowest Cp and BIC
+c("Lowest Cp" = which.min(summary_backward$cp), 
+  "Lowest BIC" = which.min(summary_backward$bic),
+  "Highest Adj R2" = which.max(summary_backward$adjr2))
+```
+
+We will use a model of size 7 because it has a higher $R^2$ than the model of size 4.
+
+```{r}
+set.seed(123)
+
+# Fitting the model
+backward_final <- regsubsets(Percent_Bleaching ~ ., 
+                             data = test, 
+                             nvmax = 10,
+                             method = "backward")
+
+# Model summary
+summary_backward_final <- summary(backward_final)
+
+# Reporting coefficients of best model
+coef(backward_final, 7)
+```
+
+### Model 1.3: Ridge Regression
+
+Below we will fit a ridge regression model with $\lambda$ chosen by cross-validation.
+
+```{r}
+####################################### Model 1.3 #######################################
+# Model 1.3: Ridge Regression
+
+set.seed(123)
+
+X_train <- model.matrix(Percent_Bleaching ~ ., data = train)[, -1]
+X_test <- model.matrix(Percent_Bleaching ~ ., data = test)[, -1]
+
+Y_train <- train$Percent_Bleaching
+Y_test <- test$Percent_Bleaching
+
+# Grid of values for lambda
+grid <- 10^seq(-2, 8, length = 100)
+
+# Fitting the model
+ridge_fit <- cv.glmnet(x = X_train,
+                       y = Y_train,
+                       alpha = 0,
+                       lambda = grid)
+plot(ridge_fit)
+
+# Optimal lambda value
+lambda_min <- ridge_fit$lambda.min
+lambda_1se <- ridge_fit$lambda.1se
+
+# Prediction and finding test MSE
+ridge_pred <- predict(ridge_fit, s = lambda_1se, newx = X_test)
+ridge_error <- mean( (test$Percent_Bleaching - ridge_pred)^2 )
+paste("Our estimated test MSE is", round(ridge_error, 2))
+
+# Compute test RMSE
+ridge_rmse <- sqrt(ridge_error)
+paste("Our estimated test RMSE is", round(ridge_rmse, 2))
+```
+
+```{r}
+# Reporting the coefficients
+predict(ridge_fit, s = lambda_1se, type = "coefficients")[1:11, ]
+```
+
+### Model 1.4: LASSO Regression
+
+Below we will fit a LASSO regression model with $\lambda$ chosen by cross-validation.
+
+```{r}
+####################################### Model 1.4 #######################################
+# Model 1.4: LASSO Regression
+
+set.seed(123)
+
+X_train <- model.matrix(Percent_Bleaching ~ ., data = train)[, -1]
+X_test <- model.matrix(Percent_Bleaching ~ ., data = test)[, -1]
+
+Y_train <- train$Percent_Bleaching
+Y_test <- test$Percent_Bleaching
+
+# Grid of values for lambda
+grid <- 10^seq(-2, 8, length = 100)
+
+# Fitting the model
+lasso_fit <- cv.glmnet(x = X_train,
+                       y = Y_train,
+                       alpha = 1,
+                       lambda = grid)
+plot(lasso_fit)
+
+# Optimal lambda value
+lambda_min <- lasso_fit$lambda.min
+lambda_1se <- lasso_fit$lambda.1se
+
+# Prediction and finding test MSE
+lasso_pred <- predict(lasso_fit, s = lambda_1se, newx = X_test)
+lasso_error <- mean( (test$Percent_Bleaching - lasso_pred)^2 )
+paste("Our estimated test MSE is", round(lasso_error, 2))
+
+# Compute test RMSE
+lasso_rmse <- sqrt(lasso_error)
+paste("Our estimated test RMSE is", round(lasso_rmse, 2))
+```
+
+```{r}
+# Reporting the coefficients
+predict(lasso_fit, s = lambda_1se, type = "coefficients")[1:11, ]
+```
+
+The only non-zero coefficients are for the following variables:
+
+* `Temperature_Kelvin`
+* `SSTA_DHW`
+
+### Model 1.5: Principal Components Regression (PCR)
+
+Below we will fit a principal components regression model with $M$ chosen by cross-validation.
+
+```{r}
+####################################### Model 1.5 #######################################
+# Model 1.5: Principal Components Regression (PCR)
+
+set.seed(123)
+
+# Fitting the model
+pcr_fit <- pcr(Percent_Bleaching ~ .,
+               data = train,
+               center = TRUE,
+               scale=TRUE,
+               validation = "CV")
+summary(pcr_fit)
+```
+
+We can see above (and as is the case for PCR) we do not have 100% of our variance explained until we get
+to all $M = p = 10$ components, which is also where the lowest cross-validation error occurs. To combat
+including all 10 components, we can say that we would like to have at least 85% of our variance explained
+by our model, and therefore we would chose a model with $M = 7$ components!
+
+```{r}
+# Prediction and finding test MSE (using 7 components)
+pcr_pred <- predict(pcr_fit, test, ncomp = 7)
+pcr_error <- mean( (test$Percent_Bleaching - pcr_pred)**2 )
+paste("Our estimated test MSE is", round(pcr_error, 2))
+
+# Compute test RMSE
+pcr_rmse <- sqrt(pcr_error)
+paste("Our estimated test RMSE is", round(pcr_rmse, 2))
+```
+
+### Model 1.6: Partial Least Squares Regression (PLS)
+
+Below we will fit a partial least squares regression model with $M$ chosen by cross-validation.
+
+```{r}
+####################################### Model 1.6 #######################################
+# Model 1.6: Partial Least Squares Regression (PLS)
+
+set.seed(123)
+
+# Fitting the model
+pls_fit <- plsr(Percent_Bleaching ~ .,
+                data = train,
+                center = TRUE,
+                scale=TRUE,
+                validation = "CV")
+summary(pls_fit)
+```
+
+We can see above that once we get to $M = 5$ components, we reach the lowest cross-validation error. However, we do not have at least 85% of our variance explained until we get to $M = 8$ components. Therefore, we will choose a model with $M = 8$ components!
+
+```{r}
+# Prediction and finding test MSE (using 8 components)
+pls_pred <- predict(pls_fit, test, ncomp = 8)
+pls_error <- mean( (test$Percent_Bleaching - pls_pred)**2 )
+paste("Our estimated test MSE is", round(pls_error, 2))
+
+# Compute test RMSE
+pls_rmse <- sqrt(pls_error)
+paste("Our estimated test RMSE is", round(pls_rmse, 2))
+```
+
+## (Section 2) Nonparametric Regression Models
+
+### Model 2.1: K-Nearest Neighbors (KNN)
+
+Below we will fit a KNN model with $K$ chosen by cross-validation.
+
+```{r}
+####################################### Model 2.1 #######################################
+# Model 2.1: KNN Regression (KNN)
+
+set.seed(123)
+
+# Setting K grid
+kgrid <- expand.grid(k = c(1:100))
+
+# Training control parameters
+cv <- trainControl(method = "cv",
+                   number = 5)
+
+# Fitting the model
+knn_fit <- train(Percent_Bleaching ~ .,
+                 data = train,
+                 method = "knn",
+                 tuneGrid = kgrid,
+                 trControl = cv)
+
+# Plotting knn_fit
+plot(knn_fit)
+
+# Finding optimal K
+k_opt <- knn_fit$bestTune$k
+paste("Our optimal K value is", k_opt)
+
+# Refitting with optimal K
+knn_fit <- train(Percent_Bleaching ~ .,
+                   data = train,
+                   method = "knn",
+                   tuneGrid = expand.grid(k = k_opt),
+                   trControl = trainControl(method = "none"))
+```
+
+```{r}
+# Predict response for the test (holdout) set
+knn_pred <- predict(knn_fit, newdata = test)
+
+# Compute test MSE
+knn_error <- mean((test$Percent_Bleaching - knn_pred)**2)
+paste("Our estimated test MSE is", round(knn_error, 2))
+
+# Compute test RMSE
+knn_rmse <- sqrt(knn_error)
+paste("Our estimated test RMSE is", round(knn_rmse, 2))
+```
+
+### Model 2.2: Multivariate Adaptive Regression Splines (MARS)
+
+Below we will fit a multivariate adaptive regression splines model.
+
+```{r}
+####################################### Model 2.2 #######################################
+# Model 2.2: Multivariate Adaptive Regression Splines (MARS)
+
+set.seed(123)
+
+# Create tuning grid
+grid <- expand.grid(degree = 1:3,
+                    nprune = seq(2, 50, length.out = 10) %>%
+                      floor())
+
+# Fitting the model
+mars_fit <- train(Percent_Bleaching ~ .,
+                  data = train,
+                  method = "earth",
+                  metric = "RMSE",
+                  trControl = trainControl(method = "cv", number = 10),
+                  tuneGrid = grid)
+ggplot(mars_fit)
+
+# Displaying model with lowest training RMSE
+mars_fit$results %>%
+  filter(nprune == mars_fit$bestTune$nprune,
+         degree == mars_fit$bestTune$degree)
+```
+
+```{r}
+# Predict response for the test (holdout) set
+mars_pred <- predict(mars_fit, newdata = test)
+
+# Compute test MSE
+mars_error <- mean((test$Percent_Bleaching - mars_pred)**2)
+paste("Our estimated test MSE is", round(mars_error, 2))
+
+# Compute test RMSE
+mars_rmse <- sqrt(mars_error)
+paste("Our estimated test RMSE is", round(mars_rmse, 2))
+```
+
+### Model 2.3: Generalized Additive Model (GAM)
+
+Below we will fit a generalized additive model.
+
+```{r}
+####################################### Model 2.3 #######################################
+# Model 2.3: Generalized Additive Model (GAM)
+
+set.seed(123)
+
+require(gam)
+require(splines)
+
+# Fitting the model
+gam_fit <- gam(Percent_Bleaching ~ Exposure
+                 + s(Distance_to_Shore)
+                 + s(Turbidity)
+                 + s(Cyclone_Frequency)
+                 + s(Depth_m)
+                 + s(Windspeed)
+                 + s(Temperature_Kelvin)
+                 + s(ClimSST)
+                 + s(SSTA)
+                 + s(SSTA_DHW),
+               data = train)
+summary(gam_fit)
+
+par(mfrow = c(2,3))
+plot(gam_fit, se = TRUE, col = "red")
+```
+
+We have very strong nonlinear relationships between `Percent_Bleaching` and both `ClimSST` and `SSTA_DHW`. We have a moderately strong nonlinear relationship between `Percent_Bleaching` and `Temperature_Kelvin`.
+
+```{r}
+# Predict response for the test (holdout) set
+gam_pred <- predict(gam_fit, newdata = test)
+
+# Compute test MSE
+gam_error <- mean((test$Percent_Bleaching - gam_pred)**2)
+paste("Our estimated test MSE is", round(gam_error, 2))
+
+# Compute test RMSE
+gam_rmse <- sqrt(gam_error)
+paste("Our estimated test RMSE is", round(gam_rmse, 2))
+```
+
+### Model 2.4: Local Regression (LR)
+
+Below we will fit a local regression model.
+
+```{r}
+####################################### Model 2.4 #######################################
+# Model 2.4: Local Regression (LR)
+
+set.seed(123)
+
+# Training control parameters and tuning grid
+cv <- trainControl(method = "cv", number = 10)
+grid <- expand.grid(span = seq(0.5, 0.9, len = 5), degree = 1)
+
+# Fitting the model
+local_model <- train(Percent_Bleaching ~ .,
+                     data = train,
+                     method = "gamLoess",
+                     trControl = cv,
+                     tuneGrid = grid)
+local_model
+```
+
+We can see above that the optimal value for span is 0.5.
+
+```{r}
+set.seed(123)
+
+# Fitting the model
+local_model2 <- train(Percent_Bleaching ~ .,
+                     data = train,
+                     method = "gamLoess",
+                     trControl = trainControl(method = "none"),
+                     tuneGrid = expand.grid(span = 0.5, degree = 1))
+```
+
+```{r}
+# Predict response for the test (holdout) set
+local_pred <- predict(local_model2, newdata = test)
+
+# Compute test MSE
+local_error <- mean((test$Percent_Bleaching - local_pred)**2)
+paste("Our estimated test MSE is", round(local_error, 2))
+
+# Compute test RMSE
+local_rmse <- sqrt(local_error)
+paste("Our estimated test RMSE is", round(local_rmse, 2))
+```
+
+### Model 2.5: Support Vector Regression (SVR)
+
+Below we will fit a support vector regression model.
+
+```{r}
+####################################### Model 2.5 #######################################
+# Model 2.5: Support Vector Machine (SVM)
+
+set.seed(123)
+
+svr_fit <- svm(Percent_Bleaching ~ .,
+               data = train,
+               type = "eps-regression",
+               kernel = "radial",
+               gamma = 1,
+               cost = 1,
+               epsilon = 0.1)
+summary(svr_fit)
+
+```
+
+```{r}
+# Predict response for the test (holdout) set
+svr_pred <- predict(svr_fit, newdata = test)
+
+# Compute test MSE
+svr_error <- mean((test$Percent_Bleaching - svr_pred)**2)
+paste("Our estimated test MSE is", round(svr_error, 2))
+
+# Compute test RMSE
+svr_rmse <- sqrt(svr_error)
+paste("Our estimated test RMSE is", round(svr_rmse, 2))
+```
+
+## (Section 3) Regression Tree Models
+
+### Model 3.1: Standard Regression Tree
+
+Below we will fit a standard regression tree model.
+
+```{r}
+####################################### Model 3.1 #######################################
+# Model 3.1: Standard Regression Tree
+
+set.seed(123)
+
+# Building the initial tree
+tree_fit <- rpart(Percent_Bleaching ~ .,
+                  data = train,
+                  control = rpart.control(cp=.0001))
+#printcp(tree_fit)
+
+# Identify the best cp value to use
+best_cp <- tree_fit$cptable[which.min(tree_fit$cptable[,"xerror"]),"CP"]
+
+# Pruned tree based on the best cp value
+pruned_tree <- prune(tree_fit, cp = best_cp)
+
+#jpeg(file="regressiontree.jpeg")
+
+# Plot the pruned tree
+tree_plot <- prp(pruned_tree,
+                 faclen = 0, # Use full names for factor labels
+                 extra = 1, # Display number of obs for each terminal node
+                 roundint = F, # Don't round to integers in output
+                 digits = 5) # Display 5 decimal places in output
+#dev.off()
+```
+
+```{r}
+# Predict response for the test (holdout) set
+tree_pred <- predict(tree_fit, newdata = test)
+
+# Compute test MSE
+tree_error <- mean((test$Percent_Bleaching - tree_pred)**2)
+paste("Our estimated test MSE is", round(tree_error, 2))
+
+# Compute test RMSE
+tree_rmse <- sqrt(tree_error)
+paste("Our estimated test RMSE is", round(tree_rmse, 2))
+```
+
+### Model 3.2: Random Forest
+
+Below we will fit a random forest model.
+
+```{r}
+####################################### Model 3.2 #######################################
+# Model 3.2: Random Forest
+
+set.seed(123)
+
+# Fitting the model
+rf_fit <- randomForest(formula = Percent_Bleaching ~ .,
+                       data = train)
+
+# Number of trees that produced lowest test MSE
+which.min(rf_fit$mse)
+
+# Plotting the error vs number of trees
+plot(rf_fit, main = "Random Forest Model")
+points(which.min(rf_fit$mse), rf_fit$mse[which.min(rf_fit$mse)],
+       col = "red", cex = 2, pch = 20)
+
+# Variable importance plot
+varImpPlot(rf_fit, main = "Random Forest Model") 
+```
+
+Below we will tune the model.
+
+```{r}
+set.seed(123)
+
+rf_tuned <- tuneRF(x = train[,-1],
+                   y = train$Percent_Bleaching,
+                   ntreeTry = 500,
+                   mtryStart = 4,
+                   stepFactor = 1.5,
+                   improve = 0.01)
+rf_tuned
+```
+
+The lowest OOB error is achieved by using 10 randomly selected predictors at each split when building the trees.
+
+```{r}
+# Predict response for the test (holdout) set
+rf_pred <- predict(rf_fit, newdata = test)
+
+# Compute test MSE
+rf_error <- mean((test$Percent_Bleaching - rf_pred)**2)
+paste("Our estimated test MSE is", round(rf_error, 2))
+
+# Compute test RMSE
+rf_rmse <- sqrt(rf_error)
+paste("Our estimated test RMSE is", round(rf_rmse, 2))
+```
+
+### Model 3.3: Bagging
+
+Below we will fit a bagged tree model.
+
+```{r}
+####################################### Model 3.3 #######################################
+# Model 3.3: Bagging
+
+set.seed(123)
+
+bag_fit <- bagging(formula = Percent_Bleaching ~ .,
+                   data = train,
+                   nbagg = 150,
+                   coob = TRUE,
+                   control = rpart.control(minsplit = 2, cp = 0))
+bag_fit
+```
+
+Meaning of certain arguments:
+
+* `nbagg`: Number of bootstrap samples.
+* `coob`: Set to `TRUE` in order to obtain the estimated OOB error.
+* `minsplit`: This tells the model to only require 2 observations in a node to split.
+* `cp`: This is the complexity parameter. By setting it to 0, we don’t require the model to be able to improve the overall fit by any amount in order to perform a split.
+
+Essentially, these last two arguments allow the individual trees to grow extremely deep, which leads to trees with high variance, but low bias. Then when we apply bagging we’re able to reduce the variance of the final model while keeping the bias low.
+
+```{r}
+set.seed(123)
+
+# Calculate variable importance
+VI <- data.frame(var = names(coral_data[,-1]), imp = varImp(bag_fit))
+
+# Sort variable importance descending
+VI_plot <- VI[order(VI$Overall, decreasing=TRUE),]
+
+par(mar=c(4,10,4,4))
+
+# Visualize variable importance with horizontal bar plot
+barplot(VI_plot$Overall,
+        names.arg = rownames(VI_plot),
+        horiz = TRUE,
+        col = "steelblue",
+        xlab = "Variable Importance",
+        las = 2)
+```
+
+```{r}
+# Predict response for the test (holdout) set
+bag_pred <- predict(bag_fit, newdata = test)
+
+# Compute test MSE
+bag_error <- mean((test$Percent_Bleaching - bag_pred)**2)
+paste("Our estimated test MSE is", round(bag_error, 2))
+
+# Compute test RMSE
+bag_rmse <- sqrt(bag_error)
+paste("Our estimated test RMSE is", round(bag_rmse, 2))
+```
+
+### Model 3.4: Boosting
+
+Below we will fit a boosted tree model.
+
+```{r}
+####################################### Model 3.4 #######################################
+# Model 3.4: Boosting
+
+set.seed(123)
+
+boost_fit <- gbm(Percent_Bleaching ~ .,
+                 data = train,
+                 distribution = "gaussian",
+                 n.trees = 5000,
+                 interaction.depth = 4)
+summary(boost_fit)
+```
+
+```{r}
+# Predict response for the test (holdout) set
+boost_pred <- predict(boost_fit, newdata = test)
+
+# Compute test MSE
+boost_error <- mean((test$Percent_Bleaching - boost_pred)**2)
+paste("Our estimated test MSE is", round(boost_error, 2))
+
+# Compute test RMSE
+boost_rmse <- sqrt(boost_error)
+paste("Our estimated test RMSE is", round(boost_rmse, 2))
+```
+
+### Model 3.5: Bayesian Additive Regression Tree (BART)
+
+Below we will fit a Bayesian additive regression tree model.
+
+```{r}
+####################################### Model 3.5 #######################################
+# Model 3.5: Bayesian Additive Regression Tree (BART)
+
+set.seed(123)
+
+x <- train[,1:10]
+y <- ("y" = train$Percent_Bleaching)
+
+# Fitting the model
+bart_fit <- bartMachine(X = x, y = y,
+                        num_trees = 100)
+summary(bart_fit)
+```
+
+```{r}
+# Predict response for the test (holdout) set
+bart_pred <- bart_machine_get_posterior(bart_fit, new_data = test[,1:10])
+
+# Compute test MSE
+bart_error <- mean((test$Percent_Bleaching - bart_pred$y_hat)**2)
+paste("Our estimated test MSE is", round(bart_error, 2))
+
+# Compute test RMSE
+bart_rmse <- sqrt(bart_error)
+paste("Our estimated test RMSE is", round(bart_rmse, 2))
+```
+
+## (Section 4) Stacking Models
+
+### Model 4.1: GAM / Random Forest / GBM (Boosting)
+
+Below we will fit a stacked model using GAM, Random Forest, and GBM (Boosting).
+
+```{r}
+####################################### Model 4.1 #######################################
+# Model 4.1: GAM / Random Forest / Boosted Tree
+
+set.seed(123)
+
+# Get response and feature names
+Y <- "Percent_Bleaching"
+X <- setdiff(names(train), Y)
+
+# Init h2o
+h2o.init()
+
+# Convert train/test sets to h2o format
+coral_train <- as.h2o(train)
+coral_test <- as.h2o(test)
+
+nfolds <- 5
+seed <- 123
+
+# GAM
+gam_model <- h2o.gam(x = X,
+                     y = Y,
+                     training_frame = coral_train,
+                     nfolds = nfolds,
+                     seed = seed,
+                     keep_cross_validation_predictions = TRUE,
+                     fold_assignment = "Modulo",
+                     family = "gaussian",
+                     gam_columns = c("Distance_to_Shore",
+                                     "Turbidity",
+                                     "Cyclone_Frequency",
+                                     "Depth_m",
+                                     "Temperature_Kelvin",
+                                     "ClimSST",
+                                     "SSTA"))
+# Random forest
+rf_model <- h2o.randomForest(x = X,
+                             y = Y,
+                             training_frame = coral_train,
+                             nfolds = nfolds,
+                             seed = seed,
+                             keep_cross_validation_predictions = TRUE,
+                             fold_assignment = "Modulo",
+                             ntrees = 1000,
+                             mtries = 5,
+                             max_depth = 30,
+                             sample_rate = 0.8,
+                             stopping_rounds = 50,
+                             stopping_metric = "RMSE",
+                             stopping_tolerance = 0)
+# GBM (Boosting)
+gbm_model <- h2o.gbm(x = X,
+                     y = Y,
+                     training_frame = coral_train,
+                     nfolds = nfolds,
+                     seed = seed,
+                     keep_cross_validation_predictions = TRUE,
+                     fold_assignment = "Modulo",
+                     ntrees = 5000,
+                     learn_rate = 0.01,
+                     max_depth = 7,
+                     min_rows = 5,
+                     sample_rate = 0.8,
+                     stopping_rounds = 50,
+                     stopping_metric = "RMSE",
+                     stopping_tolerance = 0)
+
+coral_ensemble <- h2o.stackedEnsemble(x = X,
+                                      y = Y,
+                                      training_frame = coral_train,
+                                      model_id = "coral_ensemble",
+                                      base_models = list(gam_model,
+                                                         rf_model,
+                                                         gbm_model),
+                                      metalearner_algorithm = "AUTO")
+```
+
+```{r}
+# Function to extract RMSE
+get_rmse <- function(model){
+  perf <- h2o.performance(model, newdata = coral_test)
+  return(perf@metrics$RMSE)
+}
+
+# Function to extract MSE
+get_mse <- function(model){
+  perf <- h2o.performance(model, newdata = coral_test)
+  return( (perf@metrics$RMSE)**2 )
+}
+
+# Model list
+mod_list <- list(GAM = gam_model, 
+                 RF = rf_model,
+                 GBM = gbm_model,
+                 STACKED = coral_ensemble)
+
+# Apply function to model list
+ensemble_rmse <- purrr::map_dbl(mod_list, get_rmse)
+ensemble_error <- purrr::map_dbl(mod_list, get_mse)
+```
+
+```{r}
+# Data frame of predictions
+pred <- data.frame(
+GAM_pred = as.vector(h2o.getFrame(gam_model@model$cross_validation_holdout_predictions_frame_id$name)),
+RF_pred = as.vector(h2o.getFrame(rf_model@model$cross_validation_holdout_predictions_frame_id$name)),
+GBM_pred = as.vector(h2o.getFrame(gbm_model@model$cross_validation_holdout_predictions_frame_id$name)))
+
+# Correlation of the predictions
+cor(pred)
+
+# Plotting the correlation of the predictions
+plot(pred)
+```
+
+## Summaries
+
+### Linear Regression Models
+
+```{r}
+# Combine the error values into a vector
+lm_errors <- c(lm_error1, lm_error2)
+names(lm_errors) <- c("MLR Model 1.1a \n(w/o interaction terms)",
+                      "MLR Model 1.1b \n(with interaction terms)")
+
+# Creating a bar plot of the errors
+bar <- barplot(lm_errors,
+               cex.names = 0.9,
+               xlab = "Linear Model",
+               ylab = "Test MSE",
+               main = "Test Errors for Different Multiple Linear Regression Models")
+text(x = bar, y = lm_errors, label = round(lm_errors,2), 
+     pos = 1, cex = 0.8, col = "red")
+```
+
+```{r}
+# Combine the error values into a vector
+errors <- c(lm_error1, lm_error2, ridge_error,
+            lasso_error, pcr_error, pls_error)
+names(errors) <- c("MLR \n(1.1a)",
+                   "MLR \n(1.1b)",
+                   "Ridge \n(1.3)",
+                   "Lasso \n(1.4)",
+                   "PCR \n(1.5)",
+                   "PLS \n(1.6)")
+
+# Creating a bar plot of the errors
+bar <- barplot(errors,
+               cex.names = 0.9,
+               xlab = "Regression Method",
+               ylab = "Test MSE",
+               main = "Test Errors for Different Linear Regression Methods")
+text(x = bar, y = errors, label = round(errors,2), 
+     pos = 1, cex = 0.8, col = "red")
+```
+
+```{r}
+# MSE and RMSE values for each linear model
+MSE <- c(lm_error1, lm_error2, ridge_error,
+                lasso_error, pcr_error, pls_error)
+RMSE <- c(lm_rmse1, lm_rmse2, ridge_rmse,
+                 lasso_rmse, pcr_rmse, pls_rmse)
+
+# Combining the two vectors and adding row names
+results <- data.frame("MSE" = MSE,
+                      "RMSE" = RMSE)
+rownames(results) <- c("MLR (w/o interaction)",
+                       "MLR (with interaction)",
+                       "Ridge", "LASSO",
+                       "PCR", "PLS")
+results
+kable(results)
+```
+
+### Nonparametric Regression Models
+
+```{r}
+# Combine the error values into a vector
+errors <- c(knn_error, mars_error,
+            gam_error, local_error,
+            svr_error)
+names(errors) <- c("KNN \n(2.1)",
+                   "MARS \n(2.2)",
+                   "GAM \n(2.3)",
+                   "LR \n(2.4)",
+                   "SVR \n(2.5)")
+
+# Creating a bar plot of the errors
+bar <- barplot(errors,
+               cex.names = 0.9,
+               xlab = "Nonparametric Regression Method",
+               ylab = "Test MSE",
+               main = "Test Errors for Different Nonparametric Regression Methods")
+text(x = bar, y = errors, label = round(errors,2), 
+     pos = 1, cex = 0.8, col = "red")
+```
+
+```{r}
+# MSE and RMSE values for each nonparametric model
+MSE <- c(knn_error, mars_error,
+         gam_error, local_error,
+         svr_error)
+RMSE <- c(knn_rmse, mars_rmse,
+          gam_rmse, local_rmse,
+          svr_rmse)
+
+# Combining the two vectors and adding row names
+results <- data.frame("MSE" = MSE,
+                      "RMSE" = RMSE)
+rownames(results) <- c("KNN", "MARS",
+                       "GAM", "LR",
+                       "SVR")
+
+results
+kable(results)
+```
+
+### Regression Tree Models
+
+```{r}
+# Combine the error values into a vector
+tree_errors <- c(tree_error, rf_error,
+                 bag_error, boost_error,
+                 bart_error)
+names(tree_errors) <- c("Regression \nTree (3.1)",
+                        "Random \nForest (3.2)",
+                        "Bagging \n(3.3)",
+                        "Boosting \n(3.4)",
+                        "BART \n(3.5)")
+
+# Creating a bar plot of the errors
+bar <- barplot(tree_errors,
+               cex.names = 0.9,
+               xlab = "Regression Tree Method",
+               ylab = "Test MSE",
+               main = "Test Errors for Different Regression Tree Methods")
+text(x = bar, y = tree_errors, label = round(tree_errors,2), 
+     pos = 1, cex = 0.8, col = "red")
+```
+
+```{r}
+# MSE and RMSE values for each regression tree model
+tree_MSE <- c(tree_error, rf_error,
+              bag_error, boost_error,
+              bart_error)
+tree_RMSE <- c(tree_rmse, rf_rmse,
+               bag_rmse, boost_rmse,
+               bart_rmse)
+
+# Combining the two vectors and adding row names
+tree_results <- data.frame("MSE" = tree_MSE,
+                           "RMSE" = tree_RMSE)
+rownames(tree_results) <- c("Regression Tree",
+                            "Random Forest",
+                            "Bagging",
+                            "Boosting",
+                            "BART")
+
+tree_results
+kable(tree_results)
+```
+
+### Stacked Model
+
+```{r}
+# Creating a bar plot of the errors
+bar <- barplot(ensemble_error,
+               cex.names = 0.9,
+               xlab = "Regression Method",
+               ylab = "Test MSE",
+               main = "Test Errors for Different Regression Methods & Stacking")
+text(x = bar, y = ensemble_error, label = round(ensemble_error,2), 
+     pos = 1, cex = 0.8, col = "red")
+```
+
+```{r}
+# Combining vectors into a data frame
+results <- data.frame("MSE" = ensemble_error,
+                      "RMSE" = ensemble_rmse)
+results
+kable(results)
+```
+
+
